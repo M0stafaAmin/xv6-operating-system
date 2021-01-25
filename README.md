@@ -1,9 +1,195 @@
 # Table of contents
 * [Lottery Scheduler]()
-* [Virtual Memory]()
+* [Null-pointer Dereference](#null-pointer-dereference)
+* [Read-only Code](#read-only-code)
 * [Kernel Threads](#kernel-threads)
 * [References](#references)
 * [Team Members](#team-members)
+
+
+# Null-pointer Dereference
+
+In XV6 if you dereference a null pointer such like that:
+```c
+  int *p = NULL;   
+  printf(1, "%x %x\n", p, *p);
+```
+You will not see page fault exception but you will find opcode exception in some versions of XV6 or you will see whatever code is the first bit of code in the program that is running.
+
+![Screenshot from 2021-01-25 12-48-15](https://user-images.githubusercontent.com/47724391/105696209-ac9a3b80-5f0b-11eb-8e71-689b41bd64c7.png)
+
+Trap number 6 meaning an illegal opcode , see `traps.h`
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+When the user trying to dereference a null pointer xv6 go to virual address zero (first page at page table of the process) and access memory using it.
+
+## To fix this problem:
+### when null dereference occurs XV6 mustn't find virual address zero (first page at page table of the process) by:
+
+#### 1. Making XV6 load the program into the memory not from the address 0 but from the next page which is in fact address 4096 that is 0x1000.
+
+##### In `Makefile`
+
+replace line
+```makefile
+$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+```
+with
+```makefile
+$(LD) $(LDFLAGS) -N -e main -Ttext 0x1000  -o $@ $^
+```
+
+#### 2. Making process itself to be loaded starting from address 4096 (`page number 2`).
+
+##### In `exec.c`
+modify line 	`sz = 0`  to  `sz =PGSIZE` .
+
+#### 3. Making modification to not transfering first page from parent to child while using `fork()`. 
+##### In `vm.c` inside `pde_t* copyuvm(pde_t *pgdir, uint sz)`
+
+modify line 	`for(i = 0; i < sz; i += PGSIZE)`  to  `for(i = PGSIZE; i < sz; i += PGSIZE)` .
+
+#### 4. Understanding `traps.h` to know needed types of traps, focused on `T_PGFLT --> page fault`.
+
+#### 5. Adding some code at `trap.c` inside `void tvinit(void)` required to Initializes the IDT (Interrupt Descriptor Table) table.
+```c
+case T_PGFLT :
+    cprintf("pid %d %s: trap %d err %d on cpu %d "
+    "eip 0x%x addr 0x%x--kill proc\n",
+     myproc()->pid, myproc()->name, tf->trapno,
+     tf->err, cpuid(), tf->eip, rcr2());
+     cprintf("This trap cause null pointer execption\n");
+      myproc()->killed = 1;
+      break;
+```
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### TEST
+##### In `Makefile`
+* Add `nullpointer.c`
+
+Our test file `nullpointer.c` include two function to test :
+
+* Null pointer derefrence.
+
+![Screenshot from 2021-01-25 12-50-39](https://user-images.githubusercontent.com/47724391/105696427-fb47d580-5f0b-11eb-91a2-d0bbef7fdaf2.png)
+
+* Copying parent memory to child memory from second page.
+
+![Screenshot from 2021-01-25 12-52-04](https://user-images.githubusercontent.com/47724391/105696557-29c5b080-5f0c-11eb-9691-03c726bd4ed8.png)
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Read-only Code
+In XV6 code is marked read-write but In most operating systems code is marked read-only instead of read-write, so no program can overwrite its code.
+
+To convert XV6 to be read-only or return it to be read-write again we have to change the protection bits of parts of the page table to be read-only, thus preventing such over-writes, and also be able to change them back.
+
+ ![Screenshot from 2021-01-25 18-23-25](https://user-images.githubusercontent.com/47724391/105733677-7922d580-5f3a-11eb-88ec-2d12695e3bfd.png)
+ 
+In page table entry (PTE) the writable bit is responsible for changing code to be read-only or read-write
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#### To reset writable bit (read-only) we wrote a system calls: `int mprotect(void *addr, int len)` 
+
+which  changes the protection bits of the page range starting at `addr` and of `len` pages to be read only. Thus, the program could still read the pages in this range after `mprotect()` finishes, but a write to this region should cause a trap (and thus kill the process).
+
+#### To set writable bit (read-write) we wrote a system calls: `int munprotect(void *addr, int len)`
+
+Which does opposite operation of `int mprotect(void *addr, int len)` , sets the region back to both readable and writeable.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#### All steps required to implement `mprotect` same like `munprotect` our main focus will be at `proc.c`
+
+To implement system call follow this link : [Here](https://gist.github.com/nirmohi0605/9f1a266bb630a148bb49)
+
+##### In `proc.c`
+* Added `int mprotect(void *addr, int len)`  as shown below :
+
+```c
+int
+mprotect(void *addr, int len){      ///mprotect(start, 1) ; 
+  struct proc *curproc = myproc();
+  
+  //Check if addr points to a region that is not currently a part of the address space
+  if(len <= 0 || (int)addr+len*PGSIZE > curproc->sz){ 
+    cprintf("\nwrong len\n");
+    return -1;
+  }
+
+  //Check if addr is not page aligned
+  if((int)(((int) addr) % PGSIZE )  != 0){
+    cprintf("\nwrong addr %p\n", addr);
+    return -1;
+  }
+ 
+  //loop for each page
+  pte_t *pte;
+  int i;
+  for (i = (int) addr; i < ((int) addr + (len) *PGSIZE); i+= PGSIZE){ //  from start to end=(start+lenght)
+    // Getting the address of the PTE in the current process's page table (pgdir)
+    // that corresponds to virtual address (i)
+    pte = walkpgdir(curproc->pgdir,(void*) i, 0);
+    if(pte && ((*pte & PTE_U) != 0) && ((*pte & PTE_P) != 0) ){// check it's present and user 
+      *pte = (*pte) & (~PTE_W) ; //Clearing the write bit 
+      cprintf("\nPTE : 0x%p\n", pte);
+    } else {
+      return -1;
+    }
+  }
+  //Reloading the Control register 3 with the address of page directory 
+  //to flush TLB
+  lcr3(V2P(curproc->pgdir));
+return 0;
+}
+```
+
+#### `munprotect` Same like `mprotect` but:
+replace line
+```c
+ *pte = (*pte) & (~PTE_W) ; //Clearing the write bit 
+```
+with
+```c
+*pte = (*pte) | (PTE_W) ; //Setting the write bit 
+ ```
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+### Important information :
+##### In `mmu.h` 
+Clarify how to get Page Directory ,Page Table Index and  Offset within Page from Virtual address 
+```c
+// A virtual address 'la' has a three-part structure as follows:
+//
+// +--------10------+-------10-------+---------12----------+
+// | Page Directory |   Page Table   | Offset within Page  |
+// |      Index     |      Index     |                     |
+// +----------------+----------------+---------------------+
+//  \--- PDX(va) --/ \--- PTX(va) --/
+
+// page directory index
+#define PDX(va)         (((uint)(va) >> PDXSHIFT) & 0x3FF)
+
+// page table index
+#define PTX(va)         (((uint)(va) >> PTXSHIFT) & 0x3FF)
+
+
+// Address in page table or page directory entry
+#define PTE_ADDR(pte)   ((uint)(pte) & ~0xFFF)
+#define PTE_FLAGS(pte)  ((uint)(pte) &  0xFFF)
+
+// Page table/directory entry flags.
+#define PTE_P           0x001   // Present
+#define PTE_W           0x002   // Writeable
+#define PTE_U           0x004   // User
+#define PTE_PS          0x080   // Page Size( 0 =4KB ^^^^ 1 = 4MB )
+```
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+### TEST
+##### In `Makefile`
+* Add `nullpointer.c`
+
+![Screenshot from 2021-01-25 20-00-40](https://user-images.githubusercontent.com/47724391/105746408-12a4b400-5f48-11eb-9c79-e2ac3c8a30e9.png)
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Kernel Threads
 In this project, we'll be adding real kernel threads to xv6.
