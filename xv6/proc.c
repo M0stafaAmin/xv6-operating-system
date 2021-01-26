@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "rand.h"
 #include "pstat.h"
+#include "ticketlock.h"
 
 struct {
   struct spinlock lock;
@@ -752,5 +753,46 @@ join(void** stack)
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
+}
+
+// Atomically release lock and sleep on chan.
+// Reacquires lock when awakened.
+void ticket_sleep(void *chan)
+{
+	struct proc *p = myproc();
+
+	if (p == 0)
+		panic("sleep");
+
+	acquire(&ptable.lock);
+	
+	p->chan = chan;
+	p->state = SLEEPING;
+	sched();
+	p->chan = 0;
+	
+	release(&ptable.lock);
+}
+
+void initlock_t(struct ticketlock *lk)
+{
+    lk->next_ticket = 0;
+    lk->current_turn = 0;
+}
+
+void acquire_t(struct ticketlock *lk)
+{
+    cli(); //clear inturrupt flag (IF) Disable inturrupts
+    int myTicket = fetch_and_add(&lk->next_ticket, 1);
+    
+    while (lk->current_turn != myTicket)
+        ticket_sleep(lk); // to prevent busy waiting.
+}
+
+void release_t(struct ticketlock *lk)
+{
+  fetch_and_add(&lk->current_turn, 1);
+  wakeup(lk); // wakup on release and reacquire lock.
+  sti(); //set inturrupt flag (IF) Enable inturrupts
 }
 

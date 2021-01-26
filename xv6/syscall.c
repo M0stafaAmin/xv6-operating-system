@@ -109,6 +109,9 @@ extern int sys_mprotect(void);
 extern int sys_munprotect(void);
 extern int sys_clone(void);
 extern int sys_join(void);
+extern int sys_initlock_t(void);
+extern int sys_acquire_t(void);
+extern int sys_release_t(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -138,6 +141,9 @@ static int (*syscalls[])(void) = {
 [SYS_munprotect] sys_munprotect,
 [SYS_clone]   sys_clone,
 [SYS_join]    sys_join,
+[SYS_initlock_t]   sys_initlock_t,
+[SYS_acquire_t]    sys_acquire_t,
+[SYS_release_t]    sys_release_t,
 };
 
 void

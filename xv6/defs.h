@@ -10,6 +10,7 @@ struct sleeplock;
 struct stat;
 struct superblock;
 struct pstat;
+struct ticketlock;
 
 // bio.c
 void            binit(void);
@@ -125,6 +126,9 @@ int             settickets(int);
 int             getpinfo(struct pstat*);
 int		 clone(void(*)(void*, void*),void *, void *,void *);
 int 		 join(void**);
+void 		 initlock_t(struct ticketlock *lk);
+void 		 acquire_t(struct ticketlock *lk);
+void 		 release_t(struct ticketlock *lk);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

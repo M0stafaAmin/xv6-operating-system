@@ -1,6 +1,7 @@
 struct stat;
 struct rtcdate;
 struct pstat;
+struct ticketlock;
 
 // system calls
 int fork(void);
@@ -30,6 +31,9 @@ int mprotect(void *addr, int len);
 int munprotect(void *addr, int len);
 int clone(void(*fcn)(void*, void*), void *arg1, void *arg2, void* stack);
 int join(void**);
+void initlock_t(struct ticketlock *lk);
+void acquire_t(struct ticketlock *lk);
+void release_t(struct ticketlock *lk);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -44,3 +48,8 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
+int thread_create(void(*fcn)(void*, void*), void *arg1, void *arg2);
+int thread_join();
+void lock_init(struct ticketlock *lock);
+void lock_acquire(struct ticketlock *lock);
+void lock_release(struct ticketlock *lock);
