@@ -7,6 +7,7 @@
 #include "proc.h"
 #include "spinlock.h"
 #include "rand.h"
+#include "pstat.h"
 
 struct {
   struct spinlock lock;
@@ -583,6 +584,26 @@ settickets(int tickets)
   
   acquire(&ptable.lock);
   ptable.proc[proc-ptable.proc].tickets = tickets;
+  release(&ptable.lock);
+  
+  return 0;
+}
+
+int
+getpinfo(struct pstat* ps) {
+  int i = 0;
+  struct proc *p;
+  acquire(&ptable.lock);
+  
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) 
+  {
+    ps->pid[i] = p->pid;
+    ps->inuse[i] = p->state != UNUSED;
+    ps->tickets[i] = p->tickets;
+    ps->ticks[i] = p->ticks;
+    i++;
+  }
+  
   release(&ptable.lock);
   
   return 0;
