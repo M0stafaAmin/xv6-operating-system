@@ -112,3 +112,32 @@ sys_getpinfo(void)
   	return getpinfo(d);
 }
 
+int
+sys_mprotect(void){
+  int d;
+  int n = 0;
+  if(argint(0, &d)<0 || argint(1, &n)<0)
+    return -1;
+  int rt=mprotect((void *)d,n);
+  if(rt==-1)
+  	exit();
+  	
+  return rt;
+
+}
+
+int
+sys_munprotect(void){
+  int d;
+  int n = 0;
+  if(argint(0, &d)<0 || argint(1, &n)<0)
+    return -1;
+  
+  int rt=munprotect((void *)d,n);
+  if(rt==-1)
+  	exit();
+  	
+  return rt;
+
+}
+
