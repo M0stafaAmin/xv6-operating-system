@@ -51,6 +51,7 @@ struct proc {
   char name[16];               // Process name (debugging)
   int tickets;
   int ticks;
+  void *threadstack;            // Address of thread stack to be freed
 };
 
 // Process memory is laid out contiguously, low addresses first:

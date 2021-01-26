@@ -106,10 +106,10 @@ int
 sys_getpinfo(void)
 {
     struct pstat *d;
-  	if (argptr(0, (char **)&d, sizeof(struct pstat)) < 0)
-      	return -1;
-  
-  	return getpinfo(d);
+	if (argptr(0, (char **)&d, sizeof(struct pstat)) < 0)
+	return -1;
+
+	return getpinfo(d);
 }
 
 int
@@ -140,4 +140,29 @@ sys_munprotect(void){
   return rt;
 
 }
+
+int
+sys_clone(void) {
+  void *fcn, *arg1, *arg2, *stack;
+  //check if arguments is valid before calling clone syscall
+  if (argptr(0, (void *)&fcn, sizeof(void *)) < 0)	return -1;
+  if (argptr(1, (void *)&arg1, sizeof(void *)) < 0)	return -1;
+  if (argptr(2, (void *)&arg2, sizeof(void *)) < 0)	return -1;
+  if (argptr(3, (void *)&stack, sizeof(void *)) < 0)	return -1;
+	
+  return clone(fcn, arg1, arg2, stack);
+}
+
+int
+sys_join(void)
+{
+  void **stack;
+  int stackArg;
+  stackArg = argint(0, &stackArg);
+  stack = (void**) stackArg;
+  return join(stack);
+}
+
+
+
 

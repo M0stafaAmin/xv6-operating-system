@@ -609,3 +609,148 @@ getpinfo(struct pstat* ps) {
   return 0;
 }
 
+int
+clone(void(*fcn)(void*, void*), void *arg1, void *arg2, void *stack)
+{
+  int i;
+  struct proc *np;
+  struct proc *curproc = myproc();
+  
+   //check if the stack address is page-aligned and have at least one page of memory
+  if(((uint) stack % PGSIZE) != 0) return -1; 
+  if((curproc->sz < PGSIZE + (uint) stack)) return -1;
+
+  // Allocate process.
+  if((np = allocproc()) == 0){
+    return -1;
+  }
+	
+  // Copy process data to the new thread
+  np->pgdir = curproc->pgdir; //make the thread share the parent's address space
+  
+  np->sz = curproc->sz;  //same size as parent
+  
+  np->parent = curproc;  //make calling process as the new thread parent 
+  
+  *np->tf = *curproc->tf;  //parent process and thread have the same trap frame
+
+
+
+  uint user_stack[3];
+  
+  // This sets the first value in the stack, which the base pointer will be set to. It's a "fake" value because there is no previous base pointer.
+  user_stack[0] = 0xffffffff;
+  
+  //This sets the first value after the base pointer to the first function argument. 
+  user_stack[1] = (uint) arg1;
+  
+  //This sets the second value after the base pointer to the second function argument.
+  user_stack[2] = (uint) arg2;
+  
+  // set top of the stack to the allocated page (stack is actually the bottom of the page)
+  uint stack_top = (uint) stack + PGSIZE;
+  
+  // subtract 12 bytes from the stack top to make space for the three values being saved
+  stack_top -= 12;
+  // copy user stack values to np's memory
+  if (copyout(np->pgdir, stack_top, user_stack, 12) < 0) {
+	return -1;
+  }
+
+
+  np->tf->esp = (uint) stack;	 //putting the address of stack in the stack pointer
+  np->tf->eax = 0;  
+  np->threadstack = stack;   //saving the address of the stack
+  
+  // set stack base and stack pointers for return-from-trap
+  // they will be the same value because we are returning into a function
+  np->tf->ebp = (uint) stack_top; 	//The base pointer is set to the top of the newly-allocated memory.
+  np->tf->esp = (uint) stack_top; 	// The stack pointer is also set to the of the page because that is where our function will enter. 
+  
+
+  np->tf->eip = (uint) fcn; 	// This sets the instruction pointer register. This ensures the cloned process will run fcn on start.
+  
+  
+  // Clear %eax so that fork returns 0 in the child.
+  np->tf->eax = 0;	//This is the return register. The child process returning from clone should get 0 as a return value.
+  
+  // Duplicate the files used by the current process(thread) to be used 
+  // also by the new thread
+  for(i = 0; i < NOFILE; i++)
+    if(curproc->ofile[i])
+      np->ofile[i] = filedup(curproc->ofile[i]);
+      
+  // Duplicate the current directory to be used by the new thread
+  np->cwd = idup(curproc->cwd);
+  // Make the two threads belong to the current process
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  acquire(&ptable.lock);
+  
+  // Make the state of the new thread to be runnable 
+  np->state = RUNNABLE;
+
+  release(&ptable.lock);
+
+  return np->pid;
+}
+
+int 
+join(void** stack) 
+{
+  struct proc *p;
+  int havethreads, pid;
+  struct proc *curproc = myproc();
+  
+  acquire(&ptable.lock);
+  for(;;){
+  
+    // Scan through table looking for exited children (zombie children).
+    havethreads = 0;
+    
+    //loop over processes in the process table and check if a process have the same pgdir as the current process 
+    //If they share the same page directory it means that the p must be a "child" thread of the parent process (curproc).
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+          // If the current process is not my parent or share the same address space...  
+      if(p->parent != curproc || p->pgdir != p->parent->pgdir)
+        continue; // You are not a threads
+      
+      havethreads = 1; 
+      
+      // free the thread resources
+      // the difference between join() and wait() is that join does not free the child thread's address space 
+      // Because the child is a thread, this is also the parent's address space! Freeing it would break the parent process.
+      if(p->state == ZOMBIE){
+        // Found one.
+        pid = p->pid;
+        // Removing thread from the kernal stack
+        kfree(p->kstack);
+        p->kstack = 0;
+        
+        // Reseting thread from the process table
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        
+        stack = p->threadstack;
+        p->threadstack = 0;
+        
+        release(&ptable.lock);
+        
+        return pid;
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if(!havethreads || curproc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
